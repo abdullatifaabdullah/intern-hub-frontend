@@ -2,12 +2,13 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { apiClient } from '@/lib/api';
-import type { User, SignInRequest } from '@/types';
+import type { User, SignInRequest, SignUpRequest } from '@/types';
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   signIn: (credentials: SignInRequest) => Promise<void>;
+  signUp: (credentials: SignUpRequest) => Promise<void>;
   signOut: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -48,6 +49,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await refreshUser();
   };
 
+  const signUp = async (credentials: SignUpRequest) => {
+    await apiClient.signUp(credentials);
+    await refreshUser();
+  };
+
   const signOut = async () => {
     const refreshToken = localStorage.getItem('refresh_token') || undefined;
     await apiClient.signOut(refreshToken);
@@ -55,7 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signOut, refreshUser }}>
+    <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );
@@ -68,5 +74,8 @@ export function useAuth() {
   }
   return context;
 }
+
+
+
 
 

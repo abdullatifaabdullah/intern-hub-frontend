@@ -2,6 +2,7 @@ import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosError } from 'ax
 import type {
   AuthResponse,
   SignInRequest,
+  SignUpRequest,
   RefreshTokenRequest,
   User,
   Internship,
@@ -12,22 +13,103 @@ import type {
   UpdateApplicationRequest,
 } from '@/types';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v2';
-
-// Log API base URL in development for debugging
-if (typeof window !== 'undefined') {
-  console.log('API Base URL:', API_BASE_URL);
-  console.log('Environment:', process.env.NODE_ENV);
-}
+// Get API base URL from environment
+const getApiBaseUrl = (): string => {
+  let apiUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v2';
+  
+  // DETECT PRODUCTION: Check if we're in production environment
+  const isProductionBrowser = typeof window !== 'undefined' && 
+    (window.location.protocol === 'https:' || 
+     window.location.hostname.includes('internhub.sadn.site'));
+  
+  // CRITICAL: If URL contains internhubapi.sadn.site, FORCE HTTPS - NO EXCEPTIONS
+  // This must happen FIRST before any other checks
+  if (apiUrl.includes('internhubapi.sadn.site')) {
+    // Replace HTTP with HTTPS - handle all variations
+    apiUrl = apiUrl.replace(/^http:\/\//, 'https://');
+    apiUrl = apiUrl.replace(/http:\/\//g, 'https://');
+    // Ensure it's exactly the production URL
+    if (!apiUrl.startsWith('https://internhubapi.sadn.site')) {
+      apiUrl = 'https://internhubapi.sadn.site/api/v2';
+    }
+  }
+  
+  // If in production browser (HTTPS page), force HTTPS for any API URL
+  if (isProductionBrowser && apiUrl.includes('internhubapi.sadn.site')) {
+    apiUrl = apiUrl.replace(/^http:\/\//, 'https://');
+    apiUrl = apiUrl.replace(/http:\/\//g, 'https://');
+  }
+  
+  // Final safety check - if it contains production domain, it MUST be HTTPS
+  if (apiUrl.includes('internhubapi.sadn.site') && apiUrl.startsWith('http://')) {
+    apiUrl = apiUrl.replace(/^http:\/\//, 'https://');
+    apiUrl = apiUrl.replace(/http:\/\//g, 'https://');
+  }
+  
+  // ABSOLUTE FINAL CHECK - ensure it's HTTPS
+  if (apiUrl.includes('internhubapi.sadn.site') && !apiUrl.startsWith('https://')) {
+    apiUrl = 'https://internhubapi.sadn.site/api/v2';
+  }
+  
+  return apiUrl;
+};
 
 class ApiClient {
   private client: AxiosInstance;
   private accessToken: string | null = null;
   private refreshToken: string | null = null;
+  public baseURL: string; // Make public so we can fix it at runtime if needed
+  private isProduction: boolean;
 
   constructor() {
+    // Determine if we're in production
+    this.isProduction = typeof window !== 'undefined' && 
+      (window.location.protocol === 'https:' || 
+       window.location.hostname.includes('internhub.sadn.site'));
+    
+    // Get the correct base URL (with HTTPS enforcement)
+    this.baseURL = getApiBaseUrl();
+    
+    // CRITICAL: Force HTTPS for production domain - MUST be done before axios instance
+    if (this.baseURL.includes('internhubapi.sadn.site')) {
+      this.baseURL = this.baseURL.replace(/^http:\/\//, 'https://');
+      this.baseURL = this.baseURL.replace(/http:\/\//g, 'https://');
+      // Ensure it's exactly HTTPS
+      if (!this.baseURL.startsWith('https://')) {
+        this.baseURL = 'https://internhubapi.sadn.site/api/v2';
+      }
+    }
+    
+    // AGGRESSIVE HTTPS enforcement for production - force HTTPS no matter what
+    if (this.isProduction && this.baseURL.includes('internhubapi.sadn.site')) {
+      this.baseURL = this.baseURL.replace(/^http:\/\//, 'https://');
+      this.baseURL = this.baseURL.replace(/http:\/\//g, 'https://');
+    }
+    
+    // Log API base URL for debugging (always log to help debug)
+    if (typeof window !== 'undefined') {
+      console.log('🔧 API Client Initialized:', {
+        baseURL: this.baseURL,
+        isHTTPS: this.baseURL.startsWith('https://'),
+        isProduction: this.isProduction,
+        envVar: process.env.NEXT_PUBLIC_API_BASE_URL,
+        windowProtocol: window.location.protocol,
+        windowHostname: window.location.hostname,
+      });
+    }
+    
+    // ABSOLUTE FINAL CHECK: Ensure baseURL is HTTPS before creating axios instance
+    if (this.baseURL.includes('internhubapi.sadn.site') && !this.baseURL.startsWith('https://')) {
+      console.error('❌ CRITICAL: baseURL was HTTP, forcing HTTPS');
+      this.baseURL = this.baseURL.replace(/^http:\/\//, 'https://');
+      this.baseURL = this.baseURL.replace(/http:\/\//g, 'https://');
+      if (!this.baseURL.startsWith('https://')) {
+        this.baseURL = 'https://internhubapi.sadn.site/api/v2';
+      }
+    }
+    
     this.client = axios.create({
-      baseURL: API_BASE_URL,
+      baseURL: this.baseURL,
       headers: {
         'Content-Type': 'application/json',
       },
@@ -43,22 +125,224 @@ class ApiClient {
       this.testConnection();
     }
 
-    // Request interceptor to add access token
+    // Request interceptor to add access token and ensure HTTPS
     this.client.interceptors.request.use(
       (config: InternalAxiosRequestConfig) => {
+        // CRITICAL: Force HTTPS for production domain - MUST be FIRST
+        // Check and fix baseURL immediately
+        if (config.baseURL && config.baseURL.includes('internhubapi.sadn.site')) {
+          if (config.baseURL.startsWith('http://')) {
+            console.error('🚨 BLOCKING HTTP REQUEST - Forcing HTTPS:', config.baseURL);
+            config.baseURL = config.baseURL.replace(/^http:\/\//, 'https://');
+            config.baseURL = config.baseURL.replace(/http:\/\//g, 'https://');
+          }
+          // Double-check it's HTTPS now
+          if (!config.baseURL.startsWith('https://')) {
+            config.baseURL = 'https://internhubapi.sadn.site/api/v2';
+          }
+        }
+        
+        // CRITICAL: Force HTTPS for production - do this FIRST before anything else
+        if (this.isProduction) {
+          // Force baseURL to HTTPS
+          if (config.baseURL) {
+            config.baseURL = config.baseURL.replace(/^http:\/\//, 'https://');
+          }
+          
+          // Force URL to HTTPS if it's a full URL
+          if (config.url && config.url.startsWith('http://')) {
+            config.url = config.url.replace(/^http:\/\//, 'https://');
+          }
+          
+          // Reconstruct full URL and force HTTPS if needed
+          // Axios combines baseURL + url, so we need to check the final result
+          if (config.baseURL && config.url) {
+            // Check if either contains the production domain
+            if (config.baseURL.includes('internhubapi.sadn.site') || config.url.includes('internhubapi.sadn.site')) {
+              // Ensure baseURL is HTTPS
+              config.baseURL = config.baseURL.replace(/^http:\/\//, 'https://');
+              // If url is a full URL, ensure it's HTTPS
+              if (config.url.startsWith('http://')) {
+                config.url = config.url.replace(/^http:\/\//, 'https://');
+              }
+            }
+          }
+        }
+        
+        // Additional safety: Check if baseURL contains production domain and force HTTPS
+        if (config.baseURL?.includes('internhubapi.sadn.site')) {
+          config.baseURL = config.baseURL.replace(/^http:\/\//, 'https://');
+        }
+        
+        // Additional safety: Check if url contains production domain and force HTTPS
+        if (config.url?.includes('internhubapi.sadn.site')) {
+          config.url = config.url.replace(/http:\/\/internhubapi\.sadn\.site/g, 'https://internhubapi.sadn.site');
+        }
+        
+        // FINAL NUCLEAR OPTION: If we're in production and ANY part is HTTP, force HTTPS
+        if (this.isProduction) {
+          const fullUrl = config.url 
+            ? (config.url.startsWith('http') ? config.url : `${config.baseURL}${config.url}`)
+            : config.baseURL;
+          
+          if (fullUrl && fullUrl.includes('internhubapi.sadn.site') && fullUrl.startsWith('http://')) {
+            // Reconstruct with HTTPS
+            const httpsUrl = fullUrl.replace(/^http:\/\//, 'https://');
+            if (config.url && config.url.startsWith('http')) {
+              config.url = httpsUrl;
+              config.baseURL = '';
+            } else {
+              config.baseURL = httpsUrl.split('/api/v2')[0] + '/api/v2';
+              config.url = config.url || '';
+            }
+          }
+        }
+        
+        // ABSOLUTE FINAL CHECK: Override axios's internal URL construction
+        // Force baseURL to HTTPS one more time - axios might reconstruct it
+        if (config.baseURL && config.baseURL.includes('internhubapi.sadn.site')) {
+          if (config.baseURL.startsWith('http://')) {
+            console.error('🚨 CRITICAL: HTTP detected in baseURL at final check - FIXING:', config.baseURL);
+            config.baseURL = config.baseURL.replace(/^http:\/\//, 'https://');
+            config.baseURL = config.baseURL.replace(/http:\/\//g, 'https://');
+          }
+          // Ensure it's HTTPS
+          if (!config.baseURL.startsWith('https://')) {
+            console.error('🚨 CRITICAL: baseURL not HTTPS after all checks - FORCING:', config.baseURL);
+            config.baseURL = 'https://internhubapi.sadn.site/api/v2';
+          }
+        }
+        
+        // FINAL FINAL CHECK: If we're in production and ANY URL part is HTTP, block it
+        if (this.isProduction) {
+          const finalUrl = config.url 
+            ? (config.url.startsWith('http') ? config.url : `${config.baseURL}${config.url}`)
+            : config.baseURL;
+          
+          if (finalUrl && finalUrl.includes('internhubapi.sadn.site') && finalUrl.startsWith('http://')) {
+            console.error('🚨 BLOCKING HTTP REQUEST - Mixed Content Prevention:', finalUrl);
+            // Force HTTPS by reconstructing the URL
+            const httpsUrl = finalUrl.replace(/^http:\/\//, 'https://');
+            if (config.url && config.url.startsWith('http')) {
+              config.url = httpsUrl;
+              config.baseURL = '';
+            } else {
+              config.baseURL = httpsUrl.split('/api/v2')[0] + '/api/v2';
+            }
+          }
+        }
+        
+        // Force the final constructed URL to be HTTPS by overriding axios's URL property
+        if (this.isProduction && config.baseURL) {
+          // Reconstruct the full URL manually to ensure HTTPS
+          let finalUrl = '';
+          if (config.url && config.url.startsWith('http://')) {
+            finalUrl = config.url.replace(/^http:\/\//, 'https://');
+            config.url = finalUrl;
+            config.baseURL = '';
+          } else if (config.url && config.url.startsWith('https://')) {
+            // Already HTTPS, good
+          } else {
+            // Relative URL, combine with baseURL
+            const base = config.baseURL.replace(/^http:\/\//, 'https://');
+            const path = config.url || '';
+            finalUrl = base + path;
+            // If final URL contains HTTP, force HTTPS
+            if (finalUrl.includes('internhubapi.sadn.site') && finalUrl.startsWith('http://')) {
+              finalUrl = finalUrl.replace(/^http:\/\//, 'https://');
+              // Update config to reflect HTTPS
+              config.baseURL = finalUrl.split(path)[0];
+            }
+          }
+        }
+        
+        // Add Authorization header - MUST be after all URL modifications
+        // CRITICAL: Reload token from localStorage before each request to ensure it's up to date
+        // This handles cases where token was set in another tab/window or after page refresh
+        if (typeof window !== 'undefined') {
+          const storedToken = localStorage.getItem('access_token');
+          if (storedToken && storedToken !== this.accessToken) {
+            this.accessToken = storedToken;
+          }
+        }
+        
         if (this.accessToken) {
           config.headers.Authorization = `Bearer ${this.accessToken}`;
+        } else {
+          // Log warning if token is missing for authenticated endpoints
+          if (config.url && !config.url.includes('/auth/') && !config.url.includes('/healthz')) {
+            console.warn('⚠️ No access token available for request to:', config.url);
+            console.warn('   Checked localStorage:', typeof window !== 'undefined' ? localStorage.getItem('access_token') : 'N/A');
+          }
         }
+        
+        // DEBUG: Log final URL and headers for POST requests in production
+        if (this.isProduction && config.method === 'POST' && config.baseURL && config.url) {
+          const debugUrl = config.url.startsWith('http') ? config.url : `${config.baseURL}${config.url}`;
+          console.log('📤 POST Request:', {
+            url: debugUrl,
+            baseURL: config.baseURL,
+            path: config.url,
+            hasToken: !!this.accessToken,
+            headers: {
+              'Content-Type': config.headers['Content-Type'],
+              'Authorization': config.headers.Authorization ? 'Bearer ***' : 'MISSING',
+            },
+          });
+          
+          if (debugUrl.includes('internhubapi.sadn.site') && debugUrl.startsWith('http://')) {
+            console.error('❌ CRITICAL: HTTP detected in final URL:', debugUrl);
+            console.error('   baseURL:', config.baseURL);
+            console.error('   url:', config.url);
+            // Force fix it
+            const fixedUrl = debugUrl.replace(/^http:\/\//, 'https://');
+            if (config.url.startsWith('http')) {
+              config.url = fixedUrl;
+              config.baseURL = '';
+            }
+          }
+        }
+        
         return config;
       },
       (error) => Promise.reject(error)
     );
 
-    // Response interceptor to handle token refresh
+    // Response interceptor to handle token refresh and log errors
     this.client.interceptors.response.use(
       (response) => response,
       async (error: AxiosError) => {
         const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+        
+        // Enhanced error logging for debugging connection issues
+        if (error.response) {
+          // Server responded with error
+          console.error('❌ API Error Response:', {
+            url: originalRequest?.url,
+            baseURL: originalRequest?.baseURL,
+            method: originalRequest?.method,
+            status: error.response.status,
+            statusText: error.response.statusText,
+            data: error.response.data,
+            headers: error.response.headers,
+          });
+        } else if (error.request) {
+          // Request was made but no response received
+          console.error('❌ API Network Error (No Response):', {
+            url: originalRequest?.url,
+            baseURL: originalRequest?.baseURL,
+            method: originalRequest?.method,
+            code: error.code,
+            message: error.message,
+            request: error.request,
+          });
+        } else {
+          // Something else happened
+          console.error('❌ API Error (Other):', {
+            message: error.message,
+            url: originalRequest?.url,
+          });
+        }
 
         // Don't try to refresh if:
         // 1. This is already a retry
@@ -132,7 +416,20 @@ class ApiClient {
   // Test backend connection
   async testConnection(): Promise<void> {
     try {
-      const healthUrl = API_BASE_URL.replace('/api/v2', '/healthz');
+      // Use the health URL from env, or derive from baseURL
+      let healthUrl = process.env.NEXT_PUBLIC_API_HEALTH_URL;
+      if (!healthUrl) {
+        healthUrl = this.baseURL.replace('/api/v2', '/healthz');
+      }
+      // NUCLEAR: Force HTTPS for production domain - no exceptions
+      if (healthUrl.includes('internhubapi.sadn.site')) {
+        healthUrl = healthUrl.replace(/^http:\/\//, 'https://');
+        healthUrl = healthUrl.replace(/http:\/\//g, 'https://');
+      }
+      // Also check window protocol
+      if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+        healthUrl = healthUrl.replace(/^http:\/\//, 'https://');
+      }
       const response = await fetch(healthUrl, {
         method: 'GET',
         headers: { 'Accept': 'application/json' },
@@ -143,12 +440,24 @@ class ApiClient {
         console.warn('⚠️ Backend connection test: Status', response.status);
       }
     } catch (error: any) {
-      console.error('❌ Backend connection test failed:', error.message);
-      console.error('   Make sure backend is running at', API_BASE_URL.replace('/api/v2', ''));
+      // Only log errors in development to avoid console spam
+      if (process.env.NODE_ENV === 'development') {
+        console.error('❌ Backend connection test failed:', error.message);
+        console.error('   Make sure backend is running at', this.baseURL.replace('/api/v2', ''));
+      }
     }
   }
 
   // Auth endpoints
+  async signUp(credentials: SignUpRequest): Promise<AuthResponse> {
+    const response = await this.client.post<AuthResponse>('/auth/sign-up', credentials);
+    this.setAccessToken(response.data.access_token);
+    if (response.data.refresh_token) {
+      this.setRefreshToken(response.data.refresh_token);
+    }
+    return response.data;
+  }
+
   async signIn(credentials: SignInRequest): Promise<AuthResponse> {
     const response = await this.client.post<AuthResponse>('/auth/sign-in', credentials);
     this.setAccessToken(response.data.access_token);
@@ -161,13 +470,45 @@ class ApiClient {
   async refreshAccessToken(refreshToken: string): Promise<AuthResponse> {
     // Create a separate axios instance for refresh to avoid interceptors
     // This prevents infinite loops if refresh itself fails
+    let refreshBaseUrl = this.baseURL;
+    // NUCLEAR: Force HTTPS in production - no exceptions
+    if (this.isProduction || refreshBaseUrl.includes('internhubapi.sadn.site')) {
+      refreshBaseUrl = refreshBaseUrl.replace(/^http:\/\//, 'https://');
+      refreshBaseUrl = refreshBaseUrl.replace(/http:\/\//g, 'https://');
+    }
     const refreshClient = axios.create({
-      baseURL: API_BASE_URL,
+      baseURL: refreshBaseUrl,
       headers: {
         'Content-Type': 'application/json',
       },
       timeout: 30000, // 30 second timeout
     });
+    
+    // Add interceptor to ensure HTTPS on refresh requests too - NUCLEAR LEVEL
+    refreshClient.interceptors.request.use(
+      (config: InternalAxiosRequestConfig) => {
+        // Force HTTPS for any production domain
+        if (this.isProduction || config.baseURL?.includes('internhubapi.sadn.site')) {
+          if (config.baseURL) {
+            config.baseURL = config.baseURL.replace(/^http:\/\//, 'https://');
+            config.baseURL = config.baseURL.replace(/http:\/\//g, 'https://');
+          }
+          if (config.url) {
+            config.url = config.url.replace(/^http:\/\//, 'https://');
+            config.url = config.url.replace(/http:\/\//g, 'https://');
+          }
+        }
+        // Additional check for production domain
+        if (config.baseURL?.includes('internhubapi.sadn.site')) {
+          config.baseURL = config.baseURL.replace(/^http:\/\//, 'https://');
+        }
+        if (config.url?.includes('internhubapi.sadn.site')) {
+          config.url = config.url.replace(/http:\/\/internhubapi\.sadn\.site/g, 'https://internhubapi.sadn.site');
+        }
+        return config;
+      },
+      (error) => Promise.reject(error)
+    );
     
     const response = await refreshClient.post<AuthResponse>('/auth/refresh', {
       refresh_token: refreshToken,
@@ -321,7 +662,38 @@ class ApiClient {
   }
 }
 
-export const apiClient = new ApiClient();
+// Create API client instance
+const apiClient = new ApiClient();
+
+// RUNTIME CHECK: Ensure baseURL is HTTPS (in case env var was HTTP at build time)
+// This runs after the module loads, so window is available
+if (typeof window !== 'undefined') {
+  // Use setTimeout to ensure this runs after the client is fully initialized
+  setTimeout(() => {
+    // Check if we're in production
+    const isProd = window.location.protocol === 'https:' || 
+                   window.location.hostname.includes('internhub.sadn.site');
+    
+    if (isProd && apiClient.baseURL) {
+      // Force HTTPS by accessing the baseURL property and fixing it
+      if (apiClient.baseURL.includes('internhubapi.sadn.site')) {
+        if (apiClient.baseURL.startsWith('http://')) {
+          console.error('🚨 CRITICAL: Runtime check found HTTP baseURL - FIXING:', apiClient.baseURL);
+          apiClient.baseURL = apiClient.baseURL.replace(/^http:\/\//, 'https://');
+          apiClient.baseURL = apiClient.baseURL.replace(/http:\/\//g, 'https://');
+          if (!apiClient.baseURL.startsWith('https://')) {
+            apiClient.baseURL = 'https://internhubapi.sadn.site/api/v2';
+          }
+          // Also update the axios instance's default baseURL
+          (apiClient as any).client.defaults.baseURL = apiClient.baseURL;
+          console.log('✅ Fixed baseURL to:', apiClient.baseURL);
+        }
+      }
+    }
+  }, 0);
+}
+
+export { apiClient };
 
 /**
  * Formats error messages from FastAPI error responses.
@@ -356,13 +728,15 @@ export function formatApiError(error: any): string {
     }
     
     if (error?.code === 'ERR_NETWORK' || error?.message?.includes('Network Error') || error?.message?.includes('Failed to fetch')) {
-      const apiUrl = API_BASE_URL;
+      const apiUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v2';
       return `Network error. Please check your connection and ensure the backend server is running at ${apiUrl}. Check browser console for details.`;
     }
     if (error?.code === 'ECONNREFUSED') {
-      return `Connection refused. Is the backend server running at ${API_BASE_URL}?`;
+      const apiUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v2';
+      return `Connection refused. Is the backend server running at ${apiUrl}?`;
     }
-    return error?.message || `Network error. Please check your connection to ${API_BASE_URL}. Check browser console for details.`;
+    const apiUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v2';
+    return error?.message || `Network error. Please check your connection to ${apiUrl}. Check browser console for details.`;
   }
 
   // Handle API response errors
@@ -391,5 +765,8 @@ export function formatApiError(error: any): string {
   // Fallback for other error structures
   return 'An error occurred. Please try again.';
 }
+
+
+
 
 

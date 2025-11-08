@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatApiError } from '@/lib/api';
 import './page.css';
@@ -91,6 +92,15 @@ export default function LoginPage() {
           </button>
         </form>
 
+        <div className="login-footer">
+          <p>
+            Don't have an account?{' '}
+            <Link href="/signup" className="login-link">
+              Sign up
+            </Link>
+          </p>
+        </div>
+
         <div className="login-info">
           <p>Default admin credentials:</p>
           <p>Email: admin@internhub.local</p>
@@ -100,5 +110,8 @@ export default function LoginPage() {
     </div>
   );
 }
+
+
+
 
 

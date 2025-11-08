@@ -39,6 +39,12 @@ export interface SignInRequest {
   password: string;
 }
 
+export interface SignUpRequest {
+  email: string;
+  password: string;
+  role: "admin" | "student";
+}
+
 export interface RefreshTokenRequest {
   refresh_token: string;
 }
@@ -66,5 +72,8 @@ export interface CreateApplicationRequest {
 export interface UpdateApplicationRequest {
   status: string;
 }
+
+
+
 
 
