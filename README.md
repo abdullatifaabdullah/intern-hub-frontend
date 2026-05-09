@@ -47,9 +47,11 @@ npm run dev
 
 ### Default Login Credentials
 
-- **Admin**: 
-  - Email: `admin@internhub.local`
+- **Admin**:
+  - Email: `admin@internhub.dev`
   - Password: `ChangeMe123!`
+
+The admin is auto-created by the backend bootstrap on first startup (see `backend/.env` → `DEFAULT_ADMIN_EMAIL` / `DEFAULT_ADMIN_PASSWORD`).
 
 ## Project Structure
 
